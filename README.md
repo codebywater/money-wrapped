@@ -7,6 +7,17 @@
 
 ### 👉 [Посмотреть свой год](https://codebywater.github.io/money-wrapped/) — или нажмите «Посмотреть на примере»
 
+<p align="center">
+  <img src="assets/slide-categories.png" width="180" alt="Слайд: на что ушло больше всего денег">
+  <img src="assets/slide-place.png" width="180" alt="Слайд: любимое место — Cofix, 170 раз">
+  <img src="assets/slide-delivery.png" width="180" alt="Слайд: доставка еды в шавермах">
+  <img src="assets/slide-persona.png" width="180" alt="Слайд: финансовый тип">
+</p>
+<p align="center">
+  <img src="assets/share-card.png" width="300" alt="Картинка-итог для сторис 1080×1920">
+  <br><sub>Слайды и картинка-итог на демо-выписке вымышленного человека</sub>
+</p>
+
 **Выписка не покидает ваше устройство.** Всё считается в браузере, а странице запрещено отправлять что-либо в интернет: это закреплено политикой безопасности (CSP), проверить можно в [исходном коде](docs/index.html). Картинка-итог тоже рисуется у вас.
 
 > **English summary.** A "Spotify Wrapped" for your bank statement. Drop a CSV from a Russian bank and get a story-style recap of your year: total spent, top categories, favourite place, most expensive day, food delivery converted to shawarmas, subscriptions, and your spending persona, plus a 1080×1920 share card. Runs entirely in the browser; nothing leaves your device.
