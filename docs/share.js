@@ -29,9 +29,10 @@
     const ctx = canvas.getContext("2d");
 
     const g = ctx.createLinearGradient(0, 0, W, H);
-    g.addColorStop(0, "#7b5cff");
-    g.addColorStop(0.55, "#ff5fa2");
-    g.addColorStop(1, "#ff8a3d");
+    // Те же тёмные тона, что у слайдов: белый текст читается на всей картинке (контраст ≥ 4.5:1).
+    g.addColorStop(0, "#623dff");
+    g.addColorStop(0.55, "#a3127a");
+    g.addColorStop(1, "#c20051");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
@@ -78,8 +79,8 @@
     const facts = [];
     if (r.favPlace) facts.push([r.favPlace.emoji, `${r.favPlace.name} — ${r.favPlace.count} ${Wrapped.plural(r.favPlace.count, "раз", "раза", "раз")}`]);
     facts.push(["📅", `Самый дорогой день: ${r.topDay.label}`]);
-    if (r.delivery.shawarmas > 0) facts.push(["🌯", `Доставка = ${fmt(r.delivery.shawarmas)} шаверм`]);
-    else if (r.coffee.count > 0) facts.push(["☕", `${fmt(r.coffee.count)} чашек кофе`]);
+    if (r.delivery.shawarmas > 0) facts.push(["🌯", `Доставка = ${fmt(r.delivery.shawarmas)} ${Wrapped.plural(r.delivery.shawarmas, "шаверма", "шавермы", "шаверм")}`]);
+    else if (r.coffee.count > 0) facts.push(["☕", `${fmt(r.coffee.count)} ${Wrapped.plural(r.coffee.count, "чашка", "чашки", "чашек")} кофе`]);
     let y = 1150;
     facts.slice(0, 3).forEach(([e, text]) => {
       ctx.font = `700 46px ${FONT}`;

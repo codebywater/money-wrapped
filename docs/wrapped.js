@@ -3,126 +3,50 @@
  * Работает в браузере и в Node (для тестов). Ничего никуда не отправляет.
  */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.Wrapped = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./vypiska.js"));
+  else root.Wrapped = factory(root.Vypiska);
+})(typeof self !== "undefined" ? self : this, function (Vypiska) {
   "use strict";
 
-  // ---------- разбор CSV ----------
+  // ---------- разбор выписки ----------
 
-  const HEADERS = {
-    date: ["дата операции", "дата транзакции", "дата проводки", "дата", "date"],
-    amount: ["сумма операции", "сумма в валюте счета", "сумма в валюте счёта", "сумма", "amount"],
-    credit: ["приход", "зачисление", "поступление", "credit"],
-    debit: ["расход", "списание", "debit"],
-    description: ["описание", "назначение платежа", "назначение", "наименование", "merchant", "контрагент", "получатель", "description"],
-    category: ["категория", "category"],
-    status: ["статус", "status"],
-  };
-  const ORDER = ["date", "credit", "debit", "amount", "description", "category", "status"];
-  const FAILED = /отклон|failed|declined|отмен|cancel/i;
-
-  function splitCsvLine(line, delim) {
-    const out = [];
-    let cur = "", quoted = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (quoted) {
-        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-        else if (ch === '"') quoted = false;
-        else cur += ch;
-      } else if (ch === '"') quoted = true;
-      else if (ch === delim) { out.push(cur); cur = ""; }
-      else cur += ch;
-    }
-    out.push(cur);
-    return out.map((s) => s.trim());
-  }
-
-  function findColumns(header) {
-    const lower = header.map((h) => h.toLowerCase());
-    const cols = {}, used = new Set();
-    for (const key of ORDER) {
-      for (const kw of HEADERS[key]) {
-        const idx = lower.findIndex((h, i) => !used.has(i) && h.includes(kw));
-        if (idx !== -1) { cols[key] = idx; used.add(idx); break; }
-      }
-    }
-    return cols;
-  }
-
-  function parseAmount(s) {
-    if (s == null) return null;
-    const clean = String(s).replace(/[\s ₽]|руб\.?|RUB/gi, "").replace(",", ".");
-    if (clean === "" || clean === "-") return null;
-    const n = Number(clean);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function parseDate(s) {
-    let m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?:[ T](\d{1,2}):(\d{2}))?/.exec(s);
-    if (m) return { y: +m[3], m: +m[2], d: +m[1], h: m[4] != null ? +m[4] : null };
-    m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(s);
-    if (m) return { y: +m[1], m: +m[2], d: +m[3], h: m[4] != null ? +m[4] : null };
-    return null;
-  }
-
+  // Колонки, кодировки, суммы в валюте счёта и отклонённые операции разбирает
+  // библиотека vypiska (https://github.com/codebywater/vypiska), копия лежит рядом.
   function parseStatement(text) {
-    const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
-    if (lines.length < 2) throw new Error("В файле нет строк с операциями.");
-    const first = lines[0];
-    const delim = [";", ",", "\t"].map((d) => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
-    let headerIdx = -1, cols = {};
-    for (let i = 0; i < Math.min(lines.length, 15); i++) {
-      cols = findColumns(splitCsvLine(lines[i], delim));
-      if (cols.date !== undefined && (cols.amount !== undefined || cols.debit !== undefined)) { headerIdx = i; break; }
-    }
-    if (headerIdx === -1) throw new Error("Не нашёл колонки с датой и суммой. Нужна шапка вида «Дата операции;Сумма операции;Описание».");
-
-    const ops = [];
-    for (const line of lines.slice(headerIdx + 1)) {
-      const row = splitCsvLine(line, delim);
-      const date = parseDate(row[cols.date] || "");
-      if (!date) continue;
-      if (cols.status !== undefined && FAILED.test(row[cols.status] || "")) continue;
-      let amount = null;
-      if (cols.debit !== undefined || cols.credit !== undefined) {
-        const debit = cols.debit !== undefined ? parseAmount(row[cols.debit]) : null;
-        const credit = cols.credit !== undefined ? parseAmount(row[cols.credit]) : null;
-        if (debit) amount = -Math.abs(debit);
-        else if (credit) amount = Math.abs(credit);
-      }
-      if (amount === null && cols.amount !== undefined) amount = parseAmount(row[cols.amount]);
-      if (!amount) continue;
-      ops.push({
-        date, amount,
-        description: cols.description !== undefined ? row[cols.description] : "",
-        bankCategory: cols.category !== undefined ? row[cols.category] : "",
-      });
-    }
+    const { ops } = Vypiska.parse(text);
     if (!ops.length) throw new Error("Не нашёл ни одной операции с датой и суммой.");
-    return ops;
+    return ops.map((o) => {
+      const [y, m, d] = o.date.split("-").map(Number);
+      // Время 00:00 (у ВТБ «2026-02-06 00:00:00») — это «время неизвестно», а не ночная покупка.
+      const h = o.time && o.time !== "00:00" ? Number(o.time.slice(0, 2)) : null;
+      return { date: { y, m, d, h }, amount: o.amount, description: o.description || o.counterparty, bankCategory: o.category };
+    });
   }
+
+  const decode = (bytes) => Vypiska.decode(bytes);
 
   // ---------- категории и места ----------
 
   // Порядок важен: первая подходящая категория побеждает.
+  // Короткие бренды (остин, мтс, магнит, surf, s7, t2, победа) — только целым словом, флаг u:
+  // иначе «хостинг» становится одеждой, а MAGNITOGORSK — продуктами. «YANDEX*5814*EDA» —
+  // так Яндекс подписывает операции по карте.
   const CATEGORIES = [
-    { id: "transfers", name: "Переводы себе", emoji: "🔁", re: /между (своими|собственными) счетами|на свой счет|на свою карту|пополнение вклада|на накопительный/i, skip: true },
-    { id: "delivery", name: "Доставка еды", emoji: "🛵", re: /яндекс[ .]?еда|yandex[ .]?eda|delivery club|самокат|samokat|кухня на районе|vkusvill.*достав|сбермаркет|kuper|купер|eda\.yandex/i },
-    { id: "coffee", name: "Кофе", emoji: "☕", re: /кофе|coffee|cofix|шоколадниц|shokoladnits|starbucks|surf|даблби|double ?b|skuratov|кофемания|one price/i },
-    { id: "cafe", name: "Кафе и рестораны", emoji: "🍝", re: /кафе|ресторан|restoran|cafe| бар |bar\b|пицц|pizza|додо|dodo|kfc|rostic|ростикс|бургер|burger|вкусно.{0,3}точка|теремок|шаурм|шаверм|суши|sushi/i },
-    { id: "groceries", name: "Продукты", emoji: "🛒", re: /пят[её]рочк|pyaterochka|перекр[её]ст|perekrestok|магнит|magnit|вкусвилл|vkusvill|ашан|auchan|лента|lenta|дикси|dixy|азбука вкуса|metro cash|окей|o'key|spar|супермаркет|продукт/i },
+    { id: "transfers", name: "Переводы себе", emoji: "🔁", re: /между (своими|собственными) счетами|перевод между счетами|на свой сч[её]т|на свою карту|пополнение вклада|на (накопительный|сберегательный|брокерский|инвестиционный)|копилк/i, skip: true },
+    { id: "delivery", name: "Доставка еды", emoji: "🛵", re: /яндекс[ .]?еда|yandex\W*\d*\W*eda|delivery club|самокат|samokat|кухня на районе|vkusvill.*достав|сбермаркет|kuper|купер|eda\.yandex/i },
+    { id: "coffee", name: "Кофе", emoji: "☕", re: /кофе|coffee|cofix|шоколадниц|shokoladnits|starbucks|(?<!\p{L})surf(?!\p{L})|даблби|double ?b|skuratov|кофемания|one price/iu },
+    { id: "cafe", name: "Кафе и рестораны", emoji: "🍝", re: /кафе|ресторан|restoran|cafe| бар |bar\b|пицц|pizza|додо|dodo|kfc|rostic|ростикс|бургер|burger|вкусно.{0,6}точка|vkusno.{0,4}tochka|теремок|шаурм|шаверм|суши|sushi|фастфуд/i },
+    { id: "groceries", name: "Продукты", emoji: "🛒", re: /пят[её]рочк|pyaterochka|перекр[её]ст|perekrestok|(?<!\p{L})(магнит|magnit)(?!\p{L})(?!\W*(аптек|apteka|косметик|kosmetik))|вкусвилл|vkusvill|ашан|auchan|лента|lenta|дикси|dixy|азбука вкуса|metro cash|окей|o'key|spar|супермаркет|продукт/iu },
     { id: "marketplaces", name: "Маркетплейсы", emoji: "📦", re: /ozon|озон|wildberries|вайлдберриз|\bwb\b|яндекс[ .]?маркет|market\.yandex|aliexpress|алиэкспресс|lamoda|ламода|мегамаркет/i },
     { id: "tech", name: "Техника", emoji: "📱", re: /re:? ?store|apple store|м\.?видео|mvideo|эльдорадо|eldorado|\bdns\b|днс|ситилинк|citilink|samsung|xiaomi/i },
-    { id: "taxi", name: "Такси", emoji: "🚕", re: /такси|taxi|uber|yandex.?go|ситимобил|maxim|максим|везет/i },
-    { id: "transport", name: "Транспорт", emoji: "🚇", re: /метро|metro\b|тройка|troika|мцд|ржд|rzd|аэрофлот|aeroflot|s7|победа|pobeda|автобус|транспорт|азс|лукойл|газпромнефть|роснефть|самокат.*аренд|whoosh|юрент/i },
-    { id: "subscriptions", name: "Подписки", emoji: "📺", re: /кинопоиск|kinopoisk|яндекс[ .]?плюс|yandex[ .]?plus|ivi|okko|окко|start\.ru|more\.tv|apple\.com|itunes|google[ .]?play|spotify|youtube|netflix|vk музыка|boom|звук|zvuk|литрес|bookmate|chatgpt|openai|claude|anthropic|telegram premium/i },
+    { id: "taxi", name: "Такси", emoji: "🚕", re: /такси|taxi|uber|yandex\W*\d*\W*go|ситимобил|maxim|максим|везет/i },
+    { id: "transport", name: "Транспорт", emoji: "🚇", re: /метро|metro\b|тройка|troika|мцд|ржд|rzd|аэрофлот|aeroflot|(?<![\p{L}\d])s7(?![\p{L}\d])|(?<!(кинотеатр|kinoteatr|кино|kino|cinema)\W*)(?<!\p{L})(победа|pobeda)(?!\p{L})|автобус|транспорт|азс|(?<!\p{L})azs(?!\p{L})|лукойл|lukoil|газпромнефть|gazprom ?neft|роснефть|rosneft|самокат.*аренд|whoosh|юрент/iu },
+    { id: "subscriptions", name: "Подписки", emoji: "📺", re: /кинопоиск|kinopoisk|яндекс[ .]?плюс|yandex\W*\d*\W*plus|ivi|okko|окко|start\.ru|more\.tv|apple\.com|itunes|google[ .]?play|spotify|youtube|netflix|vk музыка|boom|звук|zvuk|литрес|bookmate|chatgpt|openai|claude|anthropic|telegram premium/i },
     { id: "health", name: "Здоровье", emoji: "💊", re: /аптек|apteka|здравсити|горздрав|ригла|клиник|стоматолог|медси|инвитро|invitro|гемотест|doctor/i },
     { id: "fun", name: "Развлечения", emoji: "🎬", re: /кино|kino|cinema|театр|teatr|концерт|билет|ticket|steam|playstation|xbox|nintendo|боулинг|квест|музей|афиша|afisha/i },
-    { id: "clothes", name: "Одежда", emoji: "👟", re: /zara|uniqlo|h&m|befree|gloria jeans|глория|спортмастер|sportmaster|nike|adidas|love republic|gate31|zolla|ostin|остин|обувь/i },
-    { id: "beauty", name: "Красота", emoji: "💅", re: /золотое яблоко|zolotoe yabloko|летуаль|l'etoile|letual|рив гош|барбер|barber|салон|маникюр|beauty/i },
-    { id: "bills", name: "Связь и ЖКХ", emoji: "🏠", re: /мтс|mts|билайн|beeline|мегафон|megafon|теле2|tele2|t2|ростелеком|жку|жкх|квартплат|мосэнерго|интернет|домру|dom\.ru/i },
+    { id: "clothes", name: "Одежда", emoji: "👟", re: /zara|uniqlo|h&m|befree|gloria jeans|глория|спортмастер|sportmaster|nike|adidas|love republic|gate31|zolla|(?<!\p{L})(ostin|остин)(?!\p{L})|обувь/iu },
+    { id: "beauty", name: "Красота", emoji: "💅", re: /золотое яблоко|zolotoe yabloko|л[еэ]туаль|l'etoile|letual|рив гош|барбер|barber|салон|маникюр|beauty/i },
+    { id: "bills", name: "Связь и ЖКХ", emoji: "🏠", re: /(?<!\p{L})(мтс|mts)(?!\p{L})(?!\W*(банк|bank))|билайн|beeline|мегафон|megafon|теле2|tele2|(?<![\p{L}\d])t2(?![\p{L}\d])|ростелеком|жку|жкх|квартплат|мосэнерго|интернет(?!\W*магазин)|домру|dom\.ru/iu },
     { id: "people", name: "Переводы людям", emoji: "💸", re: /перевод|сбп|sbp|по номеру телефона/i },
   ];
   const OTHER = { id: "other", name: "Другое", emoji: "🧾" };
@@ -135,11 +59,15 @@
   }
 
   // \b в JavaScript не понимает кириллицу, поэтому граница слова задаётся явно.
-  const NOISE = /(?<!\p{L})(оплата|покупка|списание|платеж|платёж|регулярный|retail|purchase|payment|pos|card|карта|карты|rus|ru|msk|moscow|москва|moskva|spb|g|г|ооо|ип|llc)(?!\p{L})/giu;
+  // Дефис — часть слова: «по-итальянски» не должно превращаться в «-итальянски».
+  const NOISE = /(?<![\p{L}-])(оплата|покупка|списание|платеж|платёж|плата|регулярный|операция|операции|товаров|услуг|по|за|retail|purchase|payment|pos|card|карта|карты|visa|mcc|rus|ru|rur|rub|msk|moscow|москва|moskva|spb|g|г|ооо|ип|llc)(?![\p{L}-])/giu;
+  // Банковские приставки перед названием места: без этого все покупки слипаются в одно «место».
+  // После приставки — не буква: «Оплата ВкусВилл» не должна терять «В», а «POSUDA» — «POS».
+  const PREFIX = /^\s*(оплата товаров и услуг|операция по карте|покупка|оплата в|плата за|retail|pos)(?!\p{L})[\s.:,-]*/iu;
 
   // «PYATEROCHKA 1234 MOSCOW RUS» → «Pyaterochka».
   function merchantName(description) {
-    let s = description.replace(/\*+/g, " ").replace(/\d+/g, " ").replace(/[^\p{L}\s.&'-]/gu, " ");
+    let s = description.replace(PREFIX, "").replace(/\*+/g, " ").replace(/\d+/g, " ").replace(/[^\p{L}\s.&'-]/gu, " ");
     s = s.replace(NOISE, " ");
     const words = s.split(/\s+/).filter((w) => w.length > 1).slice(0, 2);
     if (!words.length) return "";
@@ -299,5 +227,5 @@
     return many;
   }
 
-  return { parseStatement, categorize, merchantName, findSubscriptions, analyze, fmt, plural, CATEGORIES, SHAWARMA, COFFEE };
+  return { parseStatement, decode, categorize, merchantName, findSubscriptions, analyze, fmt, plural, CATEGORIES, SHAWARMA, COFFEE };
 });

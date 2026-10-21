@@ -7,7 +7,7 @@
   const DURATION = 7000;
   const MONTH_SHORT = ["я", "ф", "м", "а", "м", "и", "и", "а", "с", "о", "н", "д"];
 
-  let slides = [], index = 0, timer = null, startedAt = 0, remaining = DURATION, result = null;
+  let slides = [], index = 0, timer = null, startedAt = 0, remaining = DURATION, result = null, opener = null;
 
   // Число, которое «набегает» от нуля.
   const count = (n, suffix = "") => `<span class="num" data-count="${Math.round(n)}" data-suffix="${esc(suffix)}">${fmt(n)}${suffix}</span>`;
@@ -72,7 +72,7 @@
       <h2 class="slide__title pop pop-2">${r.topMonth.name[0].toUpperCase() + r.topMonth.name.slice(1)} — ${fmt(r.topMonth.sum)} ₽</h2>
       <div class="months pop pop-3">${r.monthly.map((m, i) => `<div class="${i === r.topMonth.index ? "is-top" : ""}" style="height:${Math.max(2, Math.round(m / mmax * 100))}%;animation-delay:${0.2 + i * 0.05}s"></div>`).join("")}</div>
       <div class="months-labels">${MONTH_SHORT.map((m) => `<span>${m}</span>`).join("")}</div>
-      <p class="slide__text pop pop-4">А больше всего тратите в ${r.topWeekday}.</p>` });
+      <p class="slide__text pop pop-4">А больше всего тратите ${r.topWeekday === "вторник" ? "во" : "в"} ${r.topWeekday}.</p>` });
 
     if (r.subscriptions.list.length) {
       s.push({ g: "g4", html: `
@@ -80,7 +80,7 @@
         <div class="slide__big pop pop-2">${count(r.subscriptions.perYear, " ₽")}</div>
         <p class="slide__text pop pop-3">в год уходит на ${r.subscriptions.list.length} ${plural(r.subscriptions.list.length, "подписку", "подписки", "подписок")}:</p>
         <ul class="list pop pop-4">${r.subscriptions.list.slice(0, 5).map((x) => `<li><span>📺</span><span>${esc(x.name)}</span><span class="val num">${fmt(x.monthly)} ₽/мес</span></li>`).join("")}</ul>
-        <p class="slide__note pop pop-4">Найти забытые поможет <a href="https://codebywater.github.io/subscription-hunter/" rel="noopener" style="color:inherit;position:relative;z-index:3">Охотник за подписками</a>.</p>` });
+        <p class="slide__note pop pop-4">Найти забытые поможет <a href="https://codebywater.github.io/subscription-hunter/" rel="noopener" style="color:inherit">Охотник за подписками</a>.</p>` });
     }
 
     if (r.night && r.night.count > 0) {
@@ -139,6 +139,7 @@
     animateCounts($("slide"));
     if (s.final) setupFinal();
     clearTimeout(timer);
+    $("story").classList.remove("is-paused");
     remaining = DURATION;
     if (!s.final) schedule();
   }
@@ -149,7 +150,8 @@
   }
 
   function pause() {
-    if (slides[index]?.final) return;
+    // Второй палец во время паузы не должен ещё раз вычитать прошедшее время.
+    if (slides[index]?.final || $("story").classList.contains("is-paused")) return;
     clearTimeout(timer);
     remaining -= Date.now() - startedAt;
     $("story").classList.add("is-paused");
@@ -197,6 +199,8 @@
 
   function open(text) {
     $("error").hidden = true;
+    // Картинка прошлой выписки больше не нужна: освобождаем память под PNG.
+    if (card) card.then(({ url }) => URL.revokeObjectURL(url));
     card = null;
     try { result = Wrapped.analyze(text); } catch (e) {
       $("error").textContent = e.message;
@@ -209,30 +213,29 @@
     $("landing").hidden = true;
     $("stories").hidden = false;
     document.body.style.overflow = "hidden";
+    opener = document.activeElement;
     show(0);
     $("next").focus();
   }
 
   function close() {
     clearTimeout(timer);
+    // Закрыли, не отпустив палец: pointerup до сторис уже не дойдёт, снимаем паузу сами.
+    $("story").classList.remove("is-paused");
+    remaining = DURATION;
+    pressedAt = 0;
     $("stories").hidden = true;
     $("landing").hidden = false;
     document.body.style.overflow = "";
+    // Фокус остался бы на скрытой кнопке: возвращаем его туда, откуда открыли.
+    (opener && opener.id && $(opener.id) === opener ? opener : $("pick")).focus();
   }
 
   function readFile(file) {
     const reader = new FileReader();
-    reader.onload = () => {
-      // Банки часто отдают CSV в Windows-1251: если UTF-8 не прочитался, пробуем её.
-      if (reader.result.includes("�")) {
-        const r2 = new FileReader();
-        r2.onload = () => open(r2.result);
-        r2.readAsText(file, "windows-1251");
-        return;
-      }
-      open(reader.result);
-    };
-    reader.readAsText(file, "utf-8");
+    // Кодировку (UTF-8 или Windows-1251) выбирает Wrapped.decode по самим байтам.
+    reader.onload = () => open(Wrapped.decode(new Uint8Array(reader.result)));
+    reader.readAsArrayBuffer(file);
   }
 
   $("pick").addEventListener("click", (e) => { e.preventDefault(); $("file").click(); });
@@ -244,15 +247,21 @@
   drop.addEventListener("drop", (e) => e.dataTransfer.files[0] && readFile(e.dataTransfer.files[0]));
 
   // Короткое нажатие листает, долгое — ставит на паузу, как в обычных сторис.
-  let pressedAt = 0;
-  const tap = (step) => () => { if (Date.now() - pressedAt < 300) show(index + step); };
+  // Клик с клавиатуры или от скринридера (detail 0, без pointerdown) листает всегда.
+  let pressedAt = 0, held = false;
+  const tap = (step) => (e) => { if (e.detail === 0 || !held) show(index + step); held = false; };
   $("prev").addEventListener("click", tap(-1));
   $("next").addEventListener("click", tap(1));
   $("close").addEventListener("click", close);
   $("story").addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".story__close, .slide__actions, a")) return;
+    if (e.target.closest(".story__close, .slide__actions, a, img")) return;
     pressedAt = Date.now();
+    held = false;
     pause();
+  });
+  $("story").addEventListener("pointerup", () => {
+    held = pressedAt > 0 && Date.now() - pressedAt >= 300;
+    pressedAt = 0;
   });
   ["pointerup", "pointercancel", "pointerleave"].forEach((t) => $("story").addEventListener(t, resume));
   document.addEventListener("keydown", (e) => {
