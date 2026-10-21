@@ -1,0 +1,6 @@
+{
+  "name": "money-wrapped",
+  "private": true,
+  "license": "MIT",
+  "scripts": { "test": "node --test tests/*.test.js" }
+}
